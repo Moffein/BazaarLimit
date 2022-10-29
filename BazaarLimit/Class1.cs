@@ -6,9 +6,17 @@ using System;
 using UnityEngine.AddressableAssets;
 using UnityEngine.Networking;
 
+namespace R2API.Utils
+{
+    [AttributeUsage(AttributeTargets.Assembly)]
+    public class ManualNetworkRegistrationAttribute : Attribute
+    {
+    }
+}
+
 namespace BazaarLimit
 {
-    [BepInPlugin("com.Moffein.BazaarLimit", "BazaarLimit", "1.0.0")]
+    [BepInPlugin("com.Moffein.BazaarLimit", "BazaarLimit", "1.0.2")]
     public class BazaarLimitPlugin : BaseUnityPlugin
     {
         public static int loopBazaarCount = 0;
@@ -45,7 +53,7 @@ namespace BazaarLimit
                 }
 
                 //Copied from PortalStatueBehavior code
-                if (loopBazaarCount >= maxLoopBazaarCount)
+                if (NetworkServer.active && loopBazaarCount >= maxLoopBazaarCount)
                 {
                     foreach (PortalStatueBehavior portalStatueBehavior in UnityEngine.Object.FindObjectsOfType<PortalStatueBehavior>())
                     {
