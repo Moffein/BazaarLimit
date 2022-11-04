@@ -5,6 +5,8 @@ using UnityEngine;
 using System;
 using UnityEngine.AddressableAssets;
 using UnityEngine.Networking;
+using BepInEx.Configuration;
+using System.Runtime.CompilerServices;
 
 namespace R2API.Utils
 {
@@ -16,32 +18,42 @@ namespace R2API.Utils
 
 namespace BazaarLimit
 {
-    [BepInPlugin("com.Moffein.BazaarLimit", "BazaarLimit", "1.0.2")]
+    [BepInDependency("com.rune580.riskofoptions", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInPlugin("com.Moffein.BazaarLimit", "BazaarLimit", "1.1.0")]
     public class BazaarLimitPlugin : BaseUnityPlugin
     {
-        public static int loopBazaarCount = 0;
-        public static int maxLoopBazaarCount = 1;
-        public static bool allowRandomPortalSpawn = true;
-        public static bool fixedRandomPortalChance = true;
+        private static bool usedNewt = false;
+        private static SceneDef bazaarSceneDef = Addressables.LoadAssetAsync<SceneDef>("RoR2/Base/bazaar/bazaar.asset").WaitForCompletion();
+
+        private static int loopBazaarCount = 0;
+        public static ConfigEntry<int> maxLoopBazaarCount;
+
+        private static int loopNewtUses = 0;
+        public static ConfigEntry<int> maxLoopNewtUses;
+
+        public static ConfigEntry<bool> fixedRandomPortalChance;
 
         public void Awake()
         {
-            maxLoopBazaarCount = Config.Bind<int>("General", "Max Bazaar Visits per Loop", 1, "How many times you can visit the Bazaar Between Time each loop before Newt Altars are disabled.").Value;
-            allowRandomPortalSpawn = Config.Bind<bool>("General", "Random Bazaar Portal - Always Allow Spawn", true, "Random blue orbs can spawn even if the Bazaar Limit is reached.").Value;
-            fixedRandomPortalChance = Config.Bind<bool>("General", "Random Bazaar Portal - Fixed Chance", true, "Random blue orbs have a fixed chance, instead of lowering based on bazaar visits.").Value;
+            maxLoopBazaarCount = Config.Bind("General", "Max Bazaar Entries per Loop", -1, "How many times you can visit the Bazaar Between Time each loop. When the limit is reached, random blue portals stop spawning and Newt Altars become unable to be used. -1 disables this check.");
+            maxLoopNewtUses = Config.Bind("General", "Max Newt Altars per Loop", 1, "How many times you can use Newt Altars per loop. When the limit is reached, Newt Altars become unable to be used. -1 disables this check.");
+            fixedRandomPortalChance = Config.Bind("General", "Random Bazaar Portal - Fixed Chance", true, "Random blue orbs have a fixed chance, instead of lowering based on bazaar visits.");
+
+            if (BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey("com.rune580.riskofoptions")) RiskOfOptionsSupport();
 
             On.RoR2.Run.Start += (orig, self) =>
             {
-                 loopBazaarCount = 0;
-                 orig(self);
+                usedNewt = false;
+                loopNewtUses = 0;
+                loopBazaarCount = 0;
+                orig(self);
             };
 
             On.RoR2.Stage.Start += (orig, self) =>
             {
                 orig(self);
-
-                SceneDef sceneDef = SceneCatalog.GetSceneDefForCurrentScene();
-                if (sceneDef && sceneDef.baseSceneName.Equals("bazaar"))
+                usedNewt = false;
+                if (SceneCatalog.GetSceneDefForCurrentScene() == bazaarSceneDef)
                 {
                     loopBazaarCount++;
                 }
@@ -50,10 +62,14 @@ namespace BazaarLimit
                 if (Run.instance.stageClearCount % 5 == 0)
                 {
                     loopBazaarCount = 0;
+                    loopNewtUses = 0;
                 }
 
+                bool reachedMaxBazaarCount = maxLoopBazaarCount.Value >= 0 && loopBazaarCount >= maxLoopBazaarCount.Value;
+                bool reachedMaxNewtCount = maxLoopNewtUses.Value >= 0 && loopNewtUses >= maxLoopNewtUses.Value;
+
                 //Copied from PortalStatueBehavior code
-                if (NetworkServer.active && loopBazaarCount >= maxLoopBazaarCount)
+                if (NetworkServer.active && (reachedMaxBazaarCount || reachedMaxNewtCount))
                 {
                     foreach (PortalStatueBehavior portalStatueBehavior in UnityEngine.Object.FindObjectsOfType<PortalStatueBehavior>())
                     {
@@ -69,34 +85,56 @@ namespace BazaarLimit
                 }
             };
 
-            if (!allowRandomPortalSpawn)
+            IL.RoR2.TeleporterInteraction.Start += (il) =>
             {
-                IL.RoR2.TeleporterInteraction.Start += (il) =>
+                ILCursor c = new ILCursor(il);
+                c.GotoNext(MoveType.After,
+                    x => x.MatchLdfld(typeof(RoR2.TeleporterInteraction), "baseShopSpawnChance"));
+                c.EmitDelegate<Func<float, float>>(origChance =>
                 {
-                    ILCursor c = new ILCursor(il);
-                    c.GotoNext(MoveType.After,
-                        x => x.MatchLdfld(typeof(RoR2.TeleporterInteraction), "baseShopSpawnChance"));
-                    c.EmitDelegate<Func<float, float>>(origChance =>
-                    {
-                        if (loopBazaarCount >= maxLoopBazaarCount) return 0f;
-                        return origChance;
-                    });
-                };
-            }
+                    return (loopBazaarCount >= maxLoopBazaarCount.Value) ? 0f : origChance;
+                });
+            };
 
-            if (fixedRandomPortalChance)
+            IL.RoR2.TeleporterInteraction.Start += (il) =>
             {
-                IL.RoR2.TeleporterInteraction.Start += (il) =>
+                ILCursor c = new ILCursor(il);
+                c.GotoNext(MoveType.After,
+                    x => x.MatchLdfld(typeof(RoR2.Run), "shopPortalCount"));
+                c.EmitDelegate<Func<int, int>>(origCount =>
                 {
-                    ILCursor c = new ILCursor(il);
-                    c.GotoNext(MoveType.After,
-                        x => x.MatchLdfld(typeof(RoR2.Run), "shopPortalCount"));
-                    c.EmitDelegate<Func<int, int>>(origCount =>
+                    return fixedRandomPortalChance.Value ? 0 : origCount;
+                });
+            };
+
+            On.RoR2.PortalStatueBehavior.GrantPortalEntry += (orig, self) =>
+            {
+                orig(self);
+                if (NetworkServer.active && self.portalType == PortalStatueBehavior.PortalType.Shop)
+                {
+                    usedNewt = true;
+                }
+            };
+
+            On.RoR2.SceneExitController.Begin += (orig, self) =>
+            {
+                orig(self);
+                if (self.destinationScene == bazaarSceneDef)
+                {
+                    if (usedNewt)
                     {
-                        return 0;
-                    });
-                };
-            }
+                        loopNewtUses++;
+                    }
+                }
+            };
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+        private void RiskOfOptionsSupport()
+        {
+            RiskOfOptions.ModSettingsManager.AddOption(new RiskOfOptions.Options.IntSliderOption(maxLoopBazaarCount, new RiskOfOptions.OptionConfigs.IntSliderConfig() { min = -1, max = 5 }));
+            RiskOfOptions.ModSettingsManager.AddOption(new RiskOfOptions.Options.IntSliderOption(maxLoopNewtUses, new RiskOfOptions.OptionConfigs.IntSliderConfig() { min = -1, max = 5 }));
+            RiskOfOptions.ModSettingsManager.AddOption(new RiskOfOptions.Options.CheckBoxOption(fixedRandomPortalChance));
         }
     }
 }
