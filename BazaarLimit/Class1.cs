@@ -19,7 +19,7 @@ namespace R2API.Utils
 namespace BazaarLimit
 {
     [BepInDependency("com.rune580.riskofoptions", BepInDependency.DependencyFlags.SoftDependency)]
-    [BepInPlugin("com.Moffein.BazaarLimit", "BazaarLimit", "1.1.0")]
+    [BepInPlugin("com.Moffein.BazaarLimit", "BazaarLimit", "1.1.1")]
     public class BazaarLimitPlugin : BaseUnityPlugin
     {
         private static bool usedNewt = false;
@@ -49,41 +49,7 @@ namespace BazaarLimit
                 orig(self);
             };
 
-            On.RoR2.Stage.Start += (orig, self) =>
-            {
-                orig(self);
-                usedNewt = false;
-                if (SceneCatalog.GetSceneDefForCurrentScene() == bazaarSceneDef)
-                {
-                    loopBazaarCount++;
-                }
-
-                //Runs after count is incremented. Visiting Bazaar on stage 5 will still let you visit the bazaar on the next loop.
-                if (Run.instance.stageClearCount % 5 == 0)
-                {
-                    loopBazaarCount = 0;
-                    loopNewtUses = 0;
-                }
-
-                bool reachedMaxBazaarCount = maxLoopBazaarCount.Value >= 0 && loopBazaarCount >= maxLoopBazaarCount.Value;
-                bool reachedMaxNewtCount = maxLoopNewtUses.Value >= 0 && loopNewtUses >= maxLoopNewtUses.Value;
-
-                //Copied from PortalStatueBehavior code
-                if (NetworkServer.active && (reachedMaxBazaarCount || reachedMaxNewtCount))
-                {
-                    foreach (PortalStatueBehavior portalStatueBehavior in UnityEngine.Object.FindObjectsOfType<PortalStatueBehavior>())
-                    {
-                        if (portalStatueBehavior.portalType == PortalStatueBehavior.PortalType.Shop)
-                        {
-                            PurchaseInteraction component = portalStatueBehavior.GetComponent<PurchaseInteraction>();
-                            if (component)
-                            {
-                                component.Networkavailable = false;
-                            }
-                        }
-                    }
-                }
-            };
+            RoR2.Stage.onStageStartGlobal += Stage_onStageStartGlobal;
 
             IL.RoR2.TeleporterInteraction.Start += (il) =>
             {
@@ -127,6 +93,41 @@ namespace BazaarLimit
                     }
                 }
             };
+        }
+
+        private void Stage_onStageStartGlobal(Stage obj)
+        {
+            usedNewt = false;
+            if (SceneCatalog.GetSceneDefForCurrentScene() == bazaarSceneDef)
+            {
+                loopBazaarCount++;
+            }
+
+            //Runs after count is incremented. Visiting Bazaar on stage 5 will still let you visit the bazaar on the next loop.
+            if (Run.instance.stageClearCount % 5 == 0)
+            {
+                loopBazaarCount = 0;
+                loopNewtUses = 0;
+            }
+
+            bool reachedMaxBazaarCount = maxLoopBazaarCount.Value >= 0 && loopBazaarCount >= maxLoopBazaarCount.Value;
+            bool reachedMaxNewtCount = maxLoopNewtUses.Value >= 0 && loopNewtUses >= maxLoopNewtUses.Value;
+
+            //Copied from PortalStatueBehavior code
+            if (NetworkServer.active && (reachedMaxBazaarCount || reachedMaxNewtCount))
+            {
+                foreach (PortalStatueBehavior portalStatueBehavior in UnityEngine.Object.FindObjectsOfType<PortalStatueBehavior>())
+                {
+                    if (portalStatueBehavior.portalType == PortalStatueBehavior.PortalType.Shop)
+                    {
+                        PurchaseInteraction component = portalStatueBehavior.GetComponent<PurchaseInteraction>();
+                        if (component)
+                        {
+                            component.Networkavailable = false;
+                        }
+                    }
+                }
+            }
         }
 
         [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
